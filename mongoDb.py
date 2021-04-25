@@ -1,4 +1,6 @@
 from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
+from flask import Flask, request, jsonify, redirect, Response
 import json
 
 # Connect to our local MongoDB
@@ -8,52 +10,111 @@ client = MongoClient('mongodb://localhost:27017/')
 db = client['InfoSys']
 students = db['Students']
 
-def insert_student(name,email,year,gender):
-    student = {
-        "name": name, 
-        "email": email, 
-        "yearOfBirth": year, 
-        "gender": gender
-    }
-    res = students.insert_one(student)
-    print("Student inserted with id: ",res.inserted_id)
+# Initiate Flask App
+app = Flask(__name__)
 
-def get_all_students_after_1996():
-    # Find all students after 1996
-    iterable=students.find( { "yearOfBirth": { "$gt": 1996 } } ,{"_id":0})
+# Insert Student
+# Create Operation
+@app.route('/insertstudent', methods=['POST'])
+def insert_student():
+    # Request JSON data
+    data = None 
+    try:
+        data = json.loads(request.data)
+    except Exception as e:
+        return Response("bad json content",status=500,mimetype='application/json')
+    if data == None:
+        return Response("bad request",status=500,mimetype='application/json')
+    if not "name" in data or not "yearOfBirth" in data or not "email" in data or not "address" in data:
+        return Response("Information incompleted",status=500,mimetype="application/json")
+    
+    if students.find({"email":data["email"]}).count() == 0 :
+        student = {"email": data['email'], "name": data['name'],  "yearOfBirth":data['yearOfBirth'],"address":data[{"city":data['city'],"postcode":data['postcode'],"street":data['street']}]}
+	# Add student to the 'students' collection
+        students.insert_one(student)
+        return Response("was added to the MongoDB",status=200,mimetype='application/json') 
+    else:
+        return Response("A user with the given email already exists",status=200,mimetype='application/json')
+
+# Read Operations
+# Get all students
+@app.route('/getallstudents', methods=['GET'])
+def get_all_students():
+    iterable = students.find({})
+    output = []
     for student in iterable:
-        print(student,"\n")
+        student['_id'] = None 
+        output.append(student)
+    return jsonify(output)
 
-    # Print total count
-    print("Total number of students: ", iterable.count())
+# Get the number of all the students in the DB 
+@app.route('/getstudentcount', methods=['GET'])
+def get_students_count():
+    number_of_students = students.find({}).count()
+    return jsonify({"Number of students": number_of_students})
 
-
-def get_first_student_after_1996():
-    # Find first student after 1996 
-    res=students.find_one( { "yearOfBirth": { "$gt": 1996 } } ,{"_id":0})
-
-    # Print 
-    print("The first student after 1996:\n",res)
-
-def get_all_females_before_1996():
-    # Find all students after 1996  
-    iterable=students.find( { "yearOfBirth": { "$lt": 1996 } },{"gender":"female"})
-
-    # Print total count   
-    print("Total number of females before 1996: ", iterable.count())
-
-
-
-def find_student(name):
-    student = students.find_one({"name": name},
-                                {"_id":0})
-    print(student)
+# Find student by email
+@app.route('/getstudent/<string:email>', methods=['GET'])
+def get_student_by_email(email):
+    if email == None:
+        return Response("Bad request", status=500, mimetype='application/json')
+    student = students.find_one({"email":email})
+    if student !=None:
+        student = {'_id':str(student["_id"]),'name':student["name"],'email':student["email"], 'yearOfBirth':student["yearOfBirth"]}
+        return jsonify(student)
+    return Response('no student found',status=500,mimetype='application/json')
 
 
 
+# Find student by address
+@app.route('/getStudentsWithAddress', methods=['GET'])
+def get_student_with_address():
+   iterable = students.find({ "address": { "$exists": 1 } })
+   output = []
+   for student in iterable:
+        student['_id'] = None
+        output.append(student)
+   return jsonify(output)
 
-insert_student('Timotheos Houliaros','timos009@hotmail.com',2000,'male')
-find_student(name='Timotheos Houliaros')
-get_all_students_after_1996()
-get_first_student_after_1996()
-get_all_females_before_1996()
+
+# Find student address by email
+@app.route('/getStudentsWithAddress/<string:email>', methods=['GET'])
+def get_student_address_by_email(email):
+    if email == None:
+        return Response("Bad request", status=500, mimetype='application/json')
+    student = students.find_one({"email":email})
+    if student !=None:
+        student = { 'address':student["address"]}
+        return jsonify(student)
+    return Response('no student found',status=500,mimetype='application/json')
+
+
+#Find address of people from 1980
+@app.route('/getEightiesAddress', methods=['GET'])
+def get_eighties_address():
+   iterable = students.find({"yearOfBirth": {"$gte":1980,"$lte":1989}, "address": { "$exists": 1 } })
+   output = []
+   for student in iterable:
+        student['_id'] = None
+        output.append(student)
+   return jsonify(output)
+
+
+#Count address
+@app.route('/countAddress', methods=['GET'])
+def count_address():
+   number = students.find({ "address": { "$exists": 1 } }).count()
+   return jsonify({"Number of addresses": number}) 
+
+
+#Count specific year
+@app.route('/countYearOfBirth/<string:yearOfBirth>', methods=['GET'])
+def count_year(yearOfBirth):
+   number = students.find({ "yearOfBirth": int(yearOfBirth)}).count()
+   return jsonify({"Number of students born in "+yearOfBirth+" ": number}) 
+
+
+
+# Run Flask App
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
